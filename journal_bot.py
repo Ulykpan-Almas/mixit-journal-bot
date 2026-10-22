@@ -28,6 +28,12 @@ AGG = BASE / "data" / "agg.json"
 import cloud_sync
 cloud_sync.pull(BASE)
 DB = jc.init_db(BASE / "journal.db")
+DB.execute("CREATE TABLE IF NOT EXISTS access(user_id INTEGER PRIMARY KEY, name TEXT, status TEXT)"); DB.commit()
+ADMINS = set(ALLOWED)  # админы — из ALLOWED_IDS (секрет GitHub); остальных одобряют кнопкой в боте
+
+
+def allowed():
+    return ADMINS | {r[0] for r in DB.execute("SELECT user_id FROM access WHERE status='ok'")}
 
 B_ADD, B_HIST, B_REP, B_EXP, B_UPD = "➕ Записать правку", "📜 История карточки", "📊 Как идут заказы", "📁 Журнал в Excel", "🔄 Обновить заказы"
 KINDS = ["название", "описание", "фото", "видео", "рич-контент", "инфографика", "цена", "бонус", "остаток", "реклама", "другое"]
@@ -109,10 +115,22 @@ def build_app():
     MENU = ReplyKeyboardMarkup([[B_ADD], [B_REP, B_HIST], [B_UPD, B_EXP]], resize_keyboard=True)
     CANCEL = Markup([[Btn("✖ Отмена", callback_data="cancel")]])
 
-    def ok(u): return u.effective_user and u.effective_user.id in ALLOWED
+    def ok(u): return bool(u.effective_user and u.effective_user.id in allowed())
 
     async def deny(u):
-        await u.effective_message.reply_text(f"Нет доступа. Ваш ID: {u.effective_user.id}. Передайте его Алмасу.")
+        usr = u.effective_user; uid = usr.id
+        name = (usr.full_name or "") + (" (@%s)" % usr.username if usr.username else "")
+        row = DB.execute("SELECT status FROM access WHERE user_id=?", (uid,)).fetchone()
+        if row and row[0] == "no":
+            return await u.effective_message.reply_text("Доступ не выдан. Если это ошибка, напишите Алмасу.")
+        if row and row[0] == "wait":
+            return await u.effective_message.reply_text("Заявка уже отправлена, подождите, пока Алмас её одобрит 🙏")
+        DB.execute("INSERT OR REPLACE INTO access(user_id,name,status) VALUES(?,?,'wait')", (uid, name.strip())); DB.commit()
+        await u.effective_message.reply_text("Заявка на доступ отправлена Алмасу. Когда её одобрят, бот напишет вам сам 🙌")
+        kb = Markup([[Btn("✅ Разрешить", callback_data="acc:ok:%d" % uid), Btn("🚫 Отклонить", callback_data="acc:no:%d" % uid)]])
+        for a in ADMINS:
+            try: await u.get_bot().send_message(a, "🆕 Просит доступ к журналу:\n%s\nID: %d" % (name.strip(), uid), reply_markup=kb)
+            except Exception as e: print("не удалось написать админу", a, e)
 
     def kinds_kb(sel):
         rows, row = [], []
@@ -235,6 +253,18 @@ def build_app():
 
     async def on_button(u, c):
         q = u.callback_query; await q.answer()
+        if q.data.startswith("acc:"):
+            if u.effective_user.id not in ADMINS: return
+            _, act, tid = q.data.split(":"); tid = int(tid)
+            DB.execute("UPDATE access SET status=? WHERE user_id=?", ("ok" if act == "ok" else "no", tid)); DB.commit()
+            nm = (DB.execute("SELECT name FROM access WHERE user_id=?", (tid,)).fetchone() or [tid])[0]
+            await q.edit_message_text(("✅ Доступ выдан: %s" if act == "ok" else "🚫 Отклонено: %s") % nm)
+            try:
+                if act == "ok":
+                    await c.bot.send_message(tid, "✅ Доступ открыт! Нажмите /start", reply_markup=MENU)
+                else: await c.bot.send_message(tid, "Доступ не выдан.")
+            except Exception as e: print("не удалось написать", tid, e)
+            return
         if not ok(u): return await deny(u)
         d = c.user_data; data = q.data
         if data == "cancel":
@@ -300,7 +330,7 @@ def build_app():
         for cid, st in due:
             try: txt = jc.report(DB, cid, AGG)
             except Exception as e: txt = f"Правка №{cid}: не удалось посчитать ({e})"
-            for uid in ALLOWED: await context.bot.send_message(uid, "🔔 Отчёт: %s\n\n%s" % (titles[st], txt))
+            for uid in allowed(): await context.bot.send_message(uid, "🔔 Отчёт: %s\n\n%s" % (titles[st], txt))
             DB.execute("UPDATE changes SET reported=? WHERE id=?", (st, cid)); DB.commit()
 
     app = Application.builder().token(TOKEN).build()
