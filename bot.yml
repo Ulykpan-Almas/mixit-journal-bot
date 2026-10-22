@@ -1,0 +1,26 @@
+name: Бот журнала
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+concurrency:
+  group: mixit-bot
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -X utf8 journal_bot.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ALLOWED_IDS: ${{ secrets.ALLOWED_IDS }}
+          KASPI_TOKEN: ${{ secrets.KASPI_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          RUN_LIMIT_MIN: "350"

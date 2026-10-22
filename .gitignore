@@ -1,0 +1,6 @@
+.env
+journal.db
+journal.snap.db
+data/
+*.log
+__pycache__/

@@ -1,0 +1,15 @@
+name: Проверка Kaspi
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Запрос к Kaspi API
+        env:
+          KASPI_TOKEN: ${{ secrets.KASPI_TOKEN }}
+        run: |
+          now=$(date +%s000); frm=$((now-86400000))
+          code=$(curl -s -o out.txt -w "%{http_code}" -H "X-Auth-Token: $KASPI_TOKEN" -H "Content-Type: application/vnd.api+json" -H "User-Agent: Mozilla/5.0" "https://kaspi.kz/shop/api/v2/orders?page%5Bnumber%5D=0&page%5Bsize%5D=1&filter%5Borders%5D%5BcreationDate%5D%5B%24ge%5D=$frm&filter%5Borders%5D%5BcreationDate%5D%5B%24le%5D=$now")
+          echo "HTTP код Kaspi: $code"
+          head -c 150 out.txt | sed "s/$KASPI_TOKEN/***/g"
+          curl -s https://api.ipify.org; echo
